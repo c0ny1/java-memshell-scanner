@@ -1,14 +1,14 @@
 <%@ page import="java.net.URL" %>
 <%@ page import="java.lang.reflect.Field" %>
-<%@ page import="java.util.HashMap" %>
 <%@ page import="com.sun.org.apache.bcel.internal.Repository" %>
 <%@ page import="java.net.URLEncoder" %>
-<%@ page import="java.util.Map" %>
 <%@ page import="org.apache.catalina.core.StandardWrapper" %>
 <%@ page import="java.lang.reflect.Method" %>
-<%@ page import="java.util.ArrayList" %>
-<%@ page import="java.util.List" %>
 <%@ page import="java.util.concurrent.CopyOnWriteArrayList" %>
+<%@ page import="org.apache.catalina.Valve" %>
+<%@ page import="java.util.*" %>
+<%@ page import="org.apache.catalina.core.StandardContext" %>
+<%@ page import="org.apache.catalina.connector.Request" %>
 <%@ page contentType="text/html;charset=UTF-8" language="java" %>
 <html>
 <head>
@@ -18,6 +18,13 @@
 <center>
     <div>
         <%!
+            public Object getRequest(HttpServletRequest request) throws NoSuchFieldException, IllegalAccessException {
+                Field reqF = request.getClass().getDeclaredField("request");
+                reqF.setAccessible(true);
+                Object req = reqF.get(request);
+                return req;
+            }
+
             public Object getStandardContext(HttpServletRequest request) throws NoSuchFieldException, IllegalAccessException {
                 Object context = request.getSession().getServletContext();
                 Field _context = context.getClass().getDeclaredField("context");
@@ -315,6 +322,54 @@
                         out.write("</tr>");
                     }
                     servletId++;
+                }
+                out.write("</tbody></table>");
+
+                // Scan Valve
+                out.write("<h4>Valve scan result</h4>");
+                out.write("<table border=\"1\" cellspacing=\"0\" width=\"95%\" style=\"table-layout:fixed;word-break:break-all;background:#f2f2f2\">\n" +
+                        "    <thead>\n" +
+                        "        <th width=\"5%\">ID</th>\n" +
+                        "        <th width=\"7%\">Container</th>\n" +
+                        "        <th width=\"20%\">Valve class</th>\n" +
+                        "        <th width=\"30%\">Valve classLoader</th>\n" +
+                        "        <th width=\"35%\">Valve class file path</th>\n" +
+                        "        <th width=\"5%\">dump class</th>\n" +
+                        "        <th width=\"5%\">kill</th>\n" +
+                        "    </thead>\n" +
+                        "    <tbody>");
+
+                Map<String, List<Valve>> valveMap = new HashMap<>();
+
+                StandardContext standardContext = (StandardContext) getStandardContext(request);
+                Request req = (Request) getRequest(request);
+
+                // StandardEngine
+                valveMap.put("Engine", Arrays.asList(standardContext.getParent().getParent().getPipeline().getValves()));
+                // StandardHost
+                valveMap.put("Host", Arrays.asList(standardContext.getParent().getPipeline().getValves()));
+                // StandardContext
+                valveMap.put("Context", Arrays.asList(standardContext.getPipeline().getValves()));
+                // StandardWrapper
+                valveMap.put("Wrapper", Arrays.asList((req.getWrapper()).getPipeline().getValves()));
+
+                int valveId = 0;
+                String key = "";
+                for (Map.Entry<String, List<Valve>> valvemap : valveMap.entrySet()) {
+                    key = valvemap.getKey();
+                    for (Valve valve : valvemap.getValue()) {
+                        out.write("<tr>");
+                        out.write(String.format("<td style=\"text-align:center\">%d</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td style=\"text-align:center\"><a href=\"?action=dump&className=%s\">dump</a></td><td style=\"text-align:center\"><a href=\"?action=kill&servletName=%s\">kill</a></td>"
+                                , valveId + 1
+                                , key
+                                , valve.getClass().getName()
+                                , valve.getClass().getClassLoader()
+                                , classFileIsExists(valve.getClass())
+                                , valve.getClass().getName()
+                                , valve.getClass().getName()));
+                        out.write("</tr>");
+                        valveId++;
+                    }
                 }
                 out.write("</tbody></table>");
 
