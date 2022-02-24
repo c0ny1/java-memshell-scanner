@@ -137,6 +137,32 @@
                 }
             }
 
+            public synchronized void deleteValve(HttpServletRequest request, String valveName) throws Exception {
+                // TODO
+            }
+
+            public synchronized void deleteListener(HttpServletRequest request, String listenerName) throws Exception {
+                Object standardContext = getStandardContext(request);
+                List<Object> listeners = getListenerList(request);
+                List<Object> newListeners = new ArrayList<Object>();
+                for (Object listener : listeners) {
+                    if (listener.getClass().getName().equals(listenerName)) {
+                        continue;
+                    }
+
+                    newListeners.add(listener);
+                }
+
+                try {
+                    Method setListenerList = standardContext.getClass().getMethod("setApplicationEventListeners",
+                            Object[].class);
+                    setListenerList.invoke(standardContext, new Object[]{newListeners.toArray()});
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
+
+            }
+
             public synchronized HashMap<String, Object> getChildren(HttpServletRequest request) throws Exception {
                 Object standardContext = getStandardContext(request);
                 Field _children = standardContext.getClass().getSuperclass().getDeclaredField("children");
@@ -206,11 +232,17 @@
             String action = request.getParameter("action");
             String filterName = request.getParameter("filterName");
             String servletName = request.getParameter("servletName");
+            String valveName = request.getParameter("valveName");
+            String listenerName = request.getParameter("listenerName");
             String className = request.getParameter("className");
             if (action != null && action.equals("kill") && filterName != null) {
                 deleteFilter(request, filterName);
             } else if (action != null && action.equals("kill") && servletName != null) {
                 deleteServlet(request, servletName);
+            } else if (action != null && action.equals("kill") && valveName != null) {
+                deleteValve(request, valveName);
+            } else if (action != null && action.equals("kill") && listenerName != null) {
+                deleteListener(request, listenerName);
             } else if (action != null && action.equals("dump") && className != null) {
                 byte[] classBytes = Repository.lookupClass(Class.forName(className)).getBytes();
                 response.addHeader("content-Type", "application/octet-stream");
@@ -359,7 +391,7 @@
                     key = valvemap.getKey();
                     for (Valve valve : valvemap.getValue()) {
                         out.write("<tr>");
-                        out.write(String.format("<td style=\"text-align:center\">%d</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td style=\"text-align:center\"><a href=\"?action=dump&className=%s\">dump</a></td><td style=\"text-align:center\"><a href=\"?action=kill&servletName=%s\">kill</a></td>"
+                        out.write(String.format("<td style=\"text-align:center\">%d</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td style=\"text-align:center\"><a href=\"?action=dump&className=%s\">dump</a></td><td style=\"text-align:center\"><a href=\"?action=kill&valveName=%s\">kill</a></td>"
                                 , valveId + 1
                                 , key
                                 , valve.getClass().getName()
@@ -374,9 +406,9 @@
                 out.write("</tbody></table>");
 
                 List<Object> listeners = getListenerList(request);
-                if (listeners == null || listeners.size() == 0) {
-                    return;
-                }
+//                if (listeners == null || listeners.size() == 0) {
+//                    return;
+//                }
                 out.write("<tbody>");
                 List<ServletRequestListener> newListeners = new ArrayList<>();
                 for (Object o : listeners) {
@@ -401,7 +433,7 @@
                 int index = 0;
                 for (ServletRequestListener listener : newListeners) {
                     out.write("<tr>");
-                    out.write(String.format("<td style=\"text-align:center\">%d</td><td>%s</td><td>%s</td><td>%s</td><td style=\"text-align:center\"><a href=\"?action=dump&className=%s\">dump</a></td><td style=\"text-align:center\"><a href=\"?action=kill&servletName=%s\">kill</a></td>"
+                    out.write(String.format("<td style=\"text-align:center\">%d</td><td>%s</td><td>%s</td><td>%s</td><td style=\"text-align:center\"><a href=\"?action=dump&className=%s\">dump</a></td><td style=\"text-align:center\"><a href=\"?action=kill&listenerName=%s\">kill</a></td>"
                             , index + 1
                             , listener.getClass().getName()
                             , listener.getClass().getClassLoader()
