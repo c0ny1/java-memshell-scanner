@@ -9,6 +9,7 @@
 <%@ page import="java.util.*" %>
 <%@ page import="org.apache.catalina.core.StandardContext" %>
 <%@ page import="org.apache.catalina.connector.Request" %>
+<%@ page import="org.apache.catalina.Pipeline" %>
 <%@ page contentType="text/html;charset=UTF-8" language="java" %>
 <html>
 <head>
@@ -137,8 +138,36 @@
                 }
             }
 
-            public synchronized void deleteValve(HttpServletRequest request, String valveName) throws Exception {
-                // TODO
+            public synchronized void deleteValve(HttpServletRequest request, String containerName, String valveName)
+                    throws Exception {
+                StandardContext standardContext = (StandardContext) getStandardContext(request);
+                Request req = (Request) getRequest(request);
+                Map<String, List<Valve>> valveMap = getValveMaps(request);
+
+                Pipeline pipeline;
+                switch (containerName) {
+                    case "Engine":
+                        pipeline = standardContext.getParent().getParent().getPipeline();
+                        break;
+                    case "Host":
+                        pipeline = standardContext.getParent().getPipeline();
+                        break;
+                    case "Context":
+                        pipeline = standardContext.getPipeline();
+                        break;
+                    case "Wrapper":
+                        pipeline = (req.getWrapper()).getPipeline();
+                        break;
+                    default:
+                        return;
+                }
+
+                for (Valve valve : pipeline.getValves()) {
+                    if (valve.getClass().getName().equals(valveName)) {
+                        pipeline.removeValve(valve);
+                        break;
+                    }
+                }
             }
 
             public synchronized void deleteListener(HttpServletRequest request, String listenerName) throws Exception {
@@ -178,6 +207,24 @@
                 _servletMappings.setAccessible(true);
                 HashMap<String, String> servletMappings = (HashMap<String, String>) _servletMappings.get(standardContext);
                 return servletMappings;
+            }
+
+            public synchronized Map<String, List<Valve>> getValveMaps(HttpServletRequest request) throws Exception {
+                Map<String, List<Valve>> valveMap = new HashMap<>();
+
+                StandardContext standardContext = (StandardContext) getStandardContext(request);
+                Request req = (Request) getRequest(request);
+
+                // StandardEngine
+                valveMap.put("Engine", Arrays.asList(standardContext.getParent().getParent().getPipeline().getValves()));
+                // StandardHost
+                valveMap.put("Host", Arrays.asList(standardContext.getParent().getPipeline().getValves()));
+                // StandardContext
+                valveMap.put("Context", Arrays.asList(standardContext.getPipeline().getValves()));
+                // StandardWrapper
+                valveMap.put("Wrapper", Arrays.asList((req.getWrapper()).getPipeline().getValves()));
+
+                return valveMap;
             }
 
             public synchronized List<Object> getListenerList(HttpServletRequest request) throws Exception {
@@ -235,12 +282,14 @@
             String valveName = request.getParameter("valveName");
             String listenerName = request.getParameter("listenerName");
             String className = request.getParameter("className");
+            String containerName = request.getParameter("containerName");
+
             if (action != null && action.equals("kill") && filterName != null) {
                 deleteFilter(request, filterName);
             } else if (action != null && action.equals("kill") && servletName != null) {
                 deleteServlet(request, servletName);
-            } else if (action != null && action.equals("kill") && valveName != null) {
-                deleteValve(request, valveName);
+            } else if (action != null && action.equals("kill") && containerName != null && valveName != null) {
+                deleteValve(request, containerName, valveName);
             } else if (action != null && action.equals("kill") && listenerName != null) {
                 deleteListener(request, listenerName);
             } else if (action != null && action.equals("dump") && className != null) {
@@ -371,19 +420,7 @@
                         "    </thead>\n" +
                         "    <tbody>");
 
-                Map<String, List<Valve>> valveMap = new HashMap<>();
-
-                StandardContext standardContext = (StandardContext) getStandardContext(request);
-                Request req = (Request) getRequest(request);
-
-                // StandardEngine
-                valveMap.put("Engine", Arrays.asList(standardContext.getParent().getParent().getPipeline().getValves()));
-                // StandardHost
-                valveMap.put("Host", Arrays.asList(standardContext.getParent().getPipeline().getValves()));
-                // StandardContext
-                valveMap.put("Context", Arrays.asList(standardContext.getPipeline().getValves()));
-                // StandardWrapper
-                valveMap.put("Wrapper", Arrays.asList((req.getWrapper()).getPipeline().getValves()));
+                Map<String, List<Valve>> valveMap = getValveMaps(request);
 
                 int valveId = 0;
                 String key = "";
@@ -391,13 +428,14 @@
                     key = valvemap.getKey();
                     for (Valve valve : valvemap.getValue()) {
                         out.write("<tr>");
-                        out.write(String.format("<td style=\"text-align:center\">%d</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td style=\"text-align:center\"><a href=\"?action=dump&className=%s\">dump</a></td><td style=\"text-align:center\"><a href=\"?action=kill&valveName=%s\">kill</a></td>"
+                        out.write(String.format("<td style=\"text-align:center\">%d</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td style=\"text-align:center\"><a href=\"?action=dump&className=%s\">dump</a></td><td style=\"text-align:center\"><a href=\"?action=kill&containerName=%s&valveName=%s\">kill</a></td>"
                                 , valveId + 1
                                 , key
                                 , valve.getClass().getName()
                                 , valve.getClass().getClassLoader()
                                 , classFileIsExists(valve.getClass())
                                 , valve.getClass().getName()
+                                , key
                                 , valve.getClass().getName()));
                         out.write("</tr>");
                         valveId++;
