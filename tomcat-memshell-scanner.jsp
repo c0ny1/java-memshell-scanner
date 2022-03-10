@@ -9,7 +9,6 @@
 <%@ page import="java.util.*" %>
 <%@ page import="org.apache.catalina.core.StandardContext" %>
 <%@ page import="org.apache.catalina.connector.Request" %>
-<%@ page import="org.apache.catalina.Pipeline" %>
 <%@ page contentType="text/html;charset=UTF-8" language="java" %>
 <html>
 <head>
@@ -20,10 +19,10 @@
     <div>
         <%!
             public Object getRequest(HttpServletRequest request) throws NoSuchFieldException, IllegalAccessException {
-                Field reqF = request.getClass().getDeclaredField("request");
-                reqF.setAccessible(true);
-                Object req = reqF.get(request);
-                return req;
+                Field _request = request.getClass().getDeclaredField("request");
+                _request.setAccessible(true);
+                Object __request = _request.get(request);
+                return __request;
             }
 
             public Object getStandardContext(HttpServletRequest request) throws NoSuchFieldException, IllegalAccessException {
@@ -141,30 +140,28 @@
             public synchronized void deleteValve(HttpServletRequest request, String containerName, String valveName)
                     throws Exception {
                 StandardContext standardContext = (StandardContext) getStandardContext(request);
-                Request req = (Request) getRequest(request);
+                Request _request = (Request) getRequest(request);
                 Map<String, List<Valve>> valveMap = getValveMaps(request);
 
-                Pipeline pipeline;
-                switch (containerName) {
-                    case "Engine":
-                        pipeline = standardContext.getParent().getParent().getPipeline();
-                        break;
-                    case "Host":
-                        pipeline = standardContext.getParent().getPipeline();
-                        break;
-                    case "Context":
-                        pipeline = standardContext.getPipeline();
-                        break;
-                    case "Wrapper":
-                        pipeline = (req.getWrapper()).getPipeline();
-                        break;
-                    default:
-                        return;
+                Object pipeline;
+//                Object container;
+                // 使用if兼容tomcat7
+                if (containerName.equals("Engine")) {
+                    pipeline = standardContext.getParent().getParent().getPipeline();
+                } else if (containerName.equals("Host")) {
+                    pipeline = standardContext.getParent().getPipeline();
+                } else if (containerName.equals("Context")) {
+                    pipeline = standardContext.getPipeline();
+                } else if (containerName.equals("Wrapper")) {
+//                        container = (_request.getClass().getDeclaredMethod("getWrapper").invoke(_request));
+                    pipeline = _request.getWrapper().getPipeline();
+                } else {
+                    return;
                 }
 
-                for (Valve valve : pipeline.getValves()) {
+                for (Valve valve : valveMap.get(containerName)) {
                     if (valve.getClass().getName().equals(valveName)) {
-                        pipeline.removeValve(valve);
+                        pipeline.getClass().getDeclaredMethod("removeValve", Valve.class).invoke(pipeline, valve);
                         break;
                     }
                 }
@@ -210,7 +207,7 @@
             }
 
             public synchronized Map<String, List<Valve>> getValveMaps(HttpServletRequest request) throws Exception {
-                Map<String, List<Valve>> valveMap = new HashMap<>();
+                Map<String, List<Valve>> valveMap = new HashMap<String, List<Valve>>();
 
                 StandardContext standardContext = (StandardContext) getStandardContext(request);
                 Request req = (Request) getRequest(request);
@@ -228,10 +225,20 @@
             }
 
             public synchronized List<Object> getListenerList(HttpServletRequest request) throws Exception {
-                Object standardContext = getStandardContext(request);
-                Field _listenersList = standardContext.getClass().getDeclaredField("applicationEventListenersList");
-                _listenersList.setAccessible(true);
-                List<Object> listenerList = (CopyOnWriteArrayList) _listenersList.get(standardContext);
+                List<Object> listenerList = new ArrayList<Object>();
+
+                try { // tomcat 8、9
+                    Object standardContext = getStandardContext(request);
+                    Field _listenersList = standardContext.getClass().getDeclaredField("applicationEventListenersList");
+                    _listenersList.setAccessible(true);
+                    listenerList.addAll((CopyOnWriteArrayList) _listenersList.get(standardContext));
+                } catch (Exception e) { // tomcat 7
+                    Object standardContext = getStandardContext(request);
+                    Field _listenersList = standardContext.getClass().getDeclaredField("applicationEventListenersObjects");
+                    _listenersList.setAccessible(true);
+                    listenerList.addAll(Arrays.asList((Object[]) _listenersList.get(standardContext)));
+                }
+
                 return listenerList;
             }
 
@@ -448,7 +455,7 @@
 //                    return;
 //                }
                 out.write("<tbody>");
-                List<ServletRequestListener> newListeners = new ArrayList<>();
+                List<ServletRequestListener> newListeners = new ArrayList<ServletRequestListener>();
                 for (Object o : listeners) {
                     if (o instanceof ServletRequestListener) {
                         newListeners.add((ServletRequestListener) o);
