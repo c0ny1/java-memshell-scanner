@@ -1,14 +1,14 @@
 <%@ page import="java.net.URL" %>
 <%@ page import="java.lang.reflect.Field" %>
-<%@ page import="java.util.HashMap" %>
 <%@ page import="com.sun.org.apache.bcel.internal.Repository" %>
 <%@ page import="java.net.URLEncoder" %>
-<%@ page import="java.util.Map" %>
 <%@ page import="org.apache.catalina.core.StandardWrapper" %>
 <%@ page import="java.lang.reflect.Method" %>
-<%@ page import="java.util.ArrayList" %>
-<%@ page import="java.util.List" %>
 <%@ page import="java.util.concurrent.CopyOnWriteArrayList" %>
+<%@ page import="org.apache.catalina.Valve" %>
+<%@ page import="java.util.*" %>
+<%@ page import="org.apache.catalina.core.StandardContext" %>
+<%@ page import="org.apache.catalina.connector.Request" %>
 <%@ page contentType="text/html;charset=UTF-8" language="java" %>
 <html>
 <head>
@@ -18,6 +18,13 @@
 <center>
     <div>
         <%!
+            public Object getRequest(HttpServletRequest request) throws NoSuchFieldException, IllegalAccessException {
+                Field _request = request.getClass().getDeclaredField("request");
+                _request.setAccessible(true);
+                Object __request = _request.get(request);
+                return __request;
+            }
+
             public Object getStandardContext(HttpServletRequest request) throws NoSuchFieldException, IllegalAccessException {
                 Object context = request.getSession().getServletContext();
                 Field _context = context.getClass().getDeclaredField("context");
@@ -130,6 +137,58 @@
                 }
             }
 
+            public synchronized void deleteValve(HttpServletRequest request, String containerName, String valveName)
+                    throws Exception {
+                StandardContext standardContext = (StandardContext) getStandardContext(request);
+                Request _request = (Request) getRequest(request);
+                Map<String, List<Valve>> valveMap = getValveMaps(request);
+
+                Object pipeline;
+//                Object container;
+                // 使用if兼容tomcat7
+                if (containerName.equals("Engine")) {
+                    pipeline = standardContext.getParent().getParent().getPipeline();
+                } else if (containerName.equals("Host")) {
+                    pipeline = standardContext.getParent().getPipeline();
+                } else if (containerName.equals("Context")) {
+                    pipeline = standardContext.getPipeline();
+                } else if (containerName.equals("Wrapper")) {
+//                        container = (_request.getClass().getDeclaredMethod("getWrapper").invoke(_request));
+                    pipeline = _request.getWrapper().getPipeline();
+                } else {
+                    return;
+                }
+
+                for (Valve valve : valveMap.get(containerName)) {
+                    if (valve.getClass().getName().equals(valveName)) {
+                        pipeline.getClass().getDeclaredMethod("removeValve", Valve.class).invoke(pipeline, valve);
+                        break;
+                    }
+                }
+            }
+
+            public synchronized void deleteListener(HttpServletRequest request, String listenerName) throws Exception {
+                Object standardContext = getStandardContext(request);
+                List<Object> listeners = getListenerList(request);
+                List<Object> newListeners = new ArrayList<Object>();
+                for (Object listener : listeners) {
+                    if (listener.getClass().getName().equals(listenerName)) {
+                        continue;
+                    }
+
+                    newListeners.add(listener);
+                }
+
+                try {
+                    Method setListenerList = standardContext.getClass().getMethod("setApplicationEventListeners",
+                            Object[].class);
+                    setListenerList.invoke(standardContext, new Object[]{newListeners.toArray()});
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
+
+            }
+
             public synchronized HashMap<String, Object> getChildren(HttpServletRequest request) throws Exception {
                 Object standardContext = getStandardContext(request);
                 Field _children = standardContext.getClass().getSuperclass().getDeclaredField("children");
@@ -147,11 +206,39 @@
                 return servletMappings;
             }
 
+            public synchronized Map<String, List<Valve>> getValveMaps(HttpServletRequest request) throws Exception {
+                Map<String, List<Valve>> valveMap = new HashMap<String, List<Valve>>();
+
+                StandardContext standardContext = (StandardContext) getStandardContext(request);
+                Request req = (Request) getRequest(request);
+
+                // StandardEngine
+                valveMap.put("Engine", Arrays.asList(standardContext.getParent().getParent().getPipeline().getValves()));
+                // StandardHost
+                valveMap.put("Host", Arrays.asList(standardContext.getParent().getPipeline().getValves()));
+                // StandardContext
+                valveMap.put("Context", Arrays.asList(standardContext.getPipeline().getValves()));
+                // StandardWrapper
+                valveMap.put("Wrapper", Arrays.asList((req.getWrapper()).getPipeline().getValves()));
+
+                return valveMap;
+            }
+
             public synchronized List<Object> getListenerList(HttpServletRequest request) throws Exception {
-                Object standardContext = getStandardContext(request);
-                Field _listenersList = standardContext.getClass().getDeclaredField("applicationEventListenersList");
-                _listenersList.setAccessible(true);
-                List<Object> listenerList = (CopyOnWriteArrayList) _listenersList.get(standardContext);
+                List<Object> listenerList = new ArrayList<Object>();
+
+                try { // tomcat 8、9
+                    Object standardContext = getStandardContext(request);
+                    Field _listenersList = standardContext.getClass().getDeclaredField("applicationEventListenersList");
+                    _listenersList.setAccessible(true);
+                    listenerList.addAll((CopyOnWriteArrayList) _listenersList.get(standardContext));
+                } catch (Exception e) { // tomcat 7
+                    Object standardContext = getStandardContext(request);
+                    Field _listenersList = standardContext.getClass().getDeclaredField("applicationEventListenersObjects");
+                    _listenersList.setAccessible(true);
+                    listenerList.addAll(Arrays.asList((Object[]) _listenersList.get(standardContext)));
+                }
+
                 return listenerList;
             }
 
@@ -199,11 +286,19 @@
             String action = request.getParameter("action");
             String filterName = request.getParameter("filterName");
             String servletName = request.getParameter("servletName");
+            String valveName = request.getParameter("valveName");
+            String listenerName = request.getParameter("listenerName");
             String className = request.getParameter("className");
+            String containerName = request.getParameter("containerName");
+
             if (action != null && action.equals("kill") && filterName != null) {
                 deleteFilter(request, filterName);
             } else if (action != null && action.equals("kill") && servletName != null) {
                 deleteServlet(request, servletName);
+            } else if (action != null && action.equals("kill") && containerName != null && valveName != null) {
+                deleteValve(request, containerName, valveName);
+            } else if (action != null && action.equals("kill") && listenerName != null) {
+                deleteListener(request, listenerName);
             } else if (action != null && action.equals("dump") && className != null) {
                 byte[] classBytes = Repository.lookupClass(Class.forName(className)).getBytes();
                 response.addHeader("content-Type", "application/octet-stream");
@@ -318,12 +413,49 @@
                 }
                 out.write("</tbody></table>");
 
-                List<Object> listeners = getListenerList(request);
-                if (listeners == null || listeners.size() == 0) {
-                    return;
+                // Scan Valve
+                out.write("<h4>Valve scan result</h4>");
+                out.write("<table border=\"1\" cellspacing=\"0\" width=\"95%\" style=\"table-layout:fixed;word-break:break-all;background:#f2f2f2\">\n" +
+                        "    <thead>\n" +
+                        "        <th width=\"5%\">ID</th>\n" +
+                        "        <th width=\"7%\">Container</th>\n" +
+                        "        <th width=\"20%\">Valve class</th>\n" +
+                        "        <th width=\"30%\">Valve classLoader</th>\n" +
+                        "        <th width=\"35%\">Valve class file path</th>\n" +
+                        "        <th width=\"5%\">dump class</th>\n" +
+                        "        <th width=\"5%\">kill</th>\n" +
+                        "    </thead>\n" +
+                        "    <tbody>");
+
+                Map<String, List<Valve>> valveMap = getValveMaps(request);
+
+                int valveId = 0;
+                String key = "";
+                for (Map.Entry<String, List<Valve>> valvemap : valveMap.entrySet()) {
+                    key = valvemap.getKey();
+                    for (Valve valve : valvemap.getValue()) {
+                        out.write("<tr>");
+                        out.write(String.format("<td style=\"text-align:center\">%d</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td style=\"text-align:center\"><a href=\"?action=dump&className=%s\">dump</a></td><td style=\"text-align:center\"><a href=\"?action=kill&containerName=%s&valveName=%s\">kill</a></td>"
+                                , valveId + 1
+                                , key
+                                , valve.getClass().getName()
+                                , valve.getClass().getClassLoader()
+                                , classFileIsExists(valve.getClass())
+                                , valve.getClass().getName()
+                                , key
+                                , valve.getClass().getName()));
+                        out.write("</tr>");
+                        valveId++;
+                    }
                 }
+                out.write("</tbody></table>");
+
+                List<Object> listeners = getListenerList(request);
+//                if (listeners == null || listeners.size() == 0) {
+//                    return;
+//                }
                 out.write("<tbody>");
-                List<ServletRequestListener> newListeners = new ArrayList<>();
+                List<ServletRequestListener> newListeners = new ArrayList<ServletRequestListener>();
                 for (Object o : listeners) {
                     if (o instanceof ServletRequestListener) {
                         newListeners.add((ServletRequestListener) o);
@@ -346,7 +478,7 @@
                 int index = 0;
                 for (ServletRequestListener listener : newListeners) {
                     out.write("<tr>");
-                    out.write(String.format("<td style=\"text-align:center\">%d</td><td>%s</td><td>%s</td><td>%s</td><td style=\"text-align:center\"><a href=\"?action=dump&className=%s\">dump</a></td><td style=\"text-align:center\"><a href=\"?action=kill&servletName=%s\">kill</a></td>"
+                    out.write(String.format("<td style=\"text-align:center\">%d</td><td>%s</td><td>%s</td><td>%s</td><td style=\"text-align:center\"><a href=\"?action=dump&className=%s\">dump</a></td><td style=\"text-align:center\"><a href=\"?action=kill&listenerName=%s\">kill</a></td>"
                             , index + 1
                             , listener.getClass().getName()
                             , listener.getClass().getClassLoader()
