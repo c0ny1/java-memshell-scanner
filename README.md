@@ -8,5 +8,9 @@
 
 ![Tomcat内存马扫描结果展示](doc/listener.png)
 
+增加websocket型内存马检测，如果不存在endpoint则不显示
+
+![Tomcat内存马扫描结果展示](doc/endpoints.png)
+
 ## 0x03 更多
 [Filter/Servlet型内存马的扫描抓捕与查杀](https://gv7.me/articles/2020/filter-servlet-type-memshell-scan-capture-and-kill/)

@@ -1,14 +1,14 @@
 <%@ page import="java.net.URL" %>
 <%@ page import="java.lang.reflect.Field" %>
-<%@ page import="java.util.HashMap" %>
 <%@ page import="com.sun.org.apache.bcel.internal.Repository" %>
 <%@ page import="java.net.URLEncoder" %>
-<%@ page import="java.util.Map" %>
 <%@ page import="org.apache.catalina.core.StandardWrapper" %>
 <%@ page import="java.lang.reflect.Method" %>
-<%@ page import="java.util.ArrayList" %>
-<%@ page import="java.util.List" %>
 <%@ page import="java.util.concurrent.CopyOnWriteArrayList" %>
+<%@ page import="javax.websocket.server.ServerEndpointConfig" %>
+<%@ page import="javax.websocket.server.ServerContainer" %>
+<%@ page import="java.util.concurrent.ConcurrentHashMap" %>
+<%@ page import="java.util.*" %>
 <%@ page contentType="text/html;charset=UTF-8" language="java" %>
 <html>
 <head>
@@ -153,6 +153,27 @@
                 _listenersList.setAccessible(true);
                 List<Object> listenerList = (CopyOnWriteArrayList) _listenersList.get(standardContext);
                 return listenerList;
+            }
+
+            public synchronized List<ServerEndpointConfig> getEndpointConfigs(HttpServletRequest request) throws Exception {
+                ServerContainer sc = (ServerContainer) request.getServletContext().getAttribute(ServerContainer.class.getName());
+                Field _configExactMatchMap = sc.getClass().getDeclaredField("configExactMatchMap");
+                _configExactMatchMap.setAccessible(true);
+                ConcurrentHashMap configExactMatchMap = (ConcurrentHashMap) _configExactMatchMap.get(sc);
+
+                Class _ExactPathMatch = Class.forName("org.apache.tomcat.websocket.server.WsServerContainer$ExactPathMatch");
+                Method _getconfig = _ExactPathMatch.getDeclaredMethod("getConfig");
+                _getconfig.setAccessible(true);
+
+                List<ServerEndpointConfig> configs = new ArrayList<>();
+                Iterator<Map.Entry<String, Object>> iterator = configExactMatchMap.entrySet().iterator();
+
+                while (iterator.hasNext()) {
+                    Map.Entry<String, Object> entry = iterator.next();
+                    ServerEndpointConfig config = (ServerEndpointConfig)_getconfig.invoke(entry.getValue());
+                    configs.add(config);
+                }
+                return configs;
             }
 
             public String getFilterName(Object filterMap) throws Exception {
@@ -318,45 +339,87 @@
                 }
                 out.write("</tbody></table>");
 
-                List<Object> listeners = getListenerList(request);
-                if (listeners == null || listeners.size() == 0) {
-                    return;
+                List<Object> listeners = null;
+                try {
+                    listeners = getListenerList(request);
+                } catch (Exception e) {
+                    throw new RuntimeException(e);
                 }
-                out.write("<tbody>");
-                List<ServletRequestListener> newListeners = new ArrayList<>();
-                for (Object o : listeners) {
-                    if (o instanceof ServletRequestListener) {
-                        newListeners.add((ServletRequestListener) o);
+                if (listeners != null && listeners.size() != 0) {
+                    out.write("<tbody>");
+                    List<ServletRequestListener> newListeners = new ArrayList<>();
+                    for (Object o : listeners) {
+                        if (o instanceof ServletRequestListener) {
+                            newListeners.add((ServletRequestListener) o);
+                        }
                     }
+
+                    // Scan listener
+                    out.write("<h4>Listener scan result</h4>");
+                    out.write("<table border=\"1\" cellspacing=\"0\" width=\"95%\" style=\"table-layout:fixed;word-break:break-all;background:#f2f2f2\">\n" +
+                            "    <thead>\n" +
+                            "        <th width=\"5%\">ID</th>\n" +
+                            "        <th width=\"20%\">Listener class</th>\n" +
+                            "        <th width=\"30%\">Listener classLoader</th>\n" +
+                            "        <th width=\"35%\">Listener class file path</th>\n" +
+                            "        <th width=\"5%\">dump class</th>\n" +
+                            "        <th width=\"5%\">kill</th>\n" +
+                            "    </thead>\n" +
+                            "    <tbody>");
+
+                    int index = 0;
+                    for (ServletRequestListener listener : newListeners) {
+                        out.write("<tr>");
+                        out.write(String.format("<td style=\"text-align:center\">%d</td><td>%s</td><td>%s</td><td>%s</td><td style=\"text-align:center\"><a href=\"?action=dump&className=%s\">dump</a></td><td style=\"text-align:center\"><a href=\"?action=kill&servletName=%s\">kill</a></td>"
+                                , index + 1
+                                , listener.getClass().getName()
+                                , listener.getClass().getClassLoader()
+                                , classFileIsExists(listener.getClass())
+                                , listener.getClass().getName()
+                                , listener.getClass().getName()));
+                        out.write("</tr>");
+                        index++;
+                    }
+                    out.write("</tbody></table>");
                 }
 
-                // Scan listener
-                out.write("<h4>Listener scan result</h4>");
-                out.write("<table border=\"1\" cellspacing=\"0\" width=\"95%\" style=\"table-layout:fixed;word-break:break-all;background:#f2f2f2\">\n" +
-                        "    <thead>\n" +
-                        "        <th width=\"5%\">ID</th>\n" +
-                        "        <th width=\"20%\">Listener class</th>\n" +
-                        "        <th width=\"30%\">Listener classLoader</th>\n" +
-                        "        <th width=\"35%\">Listener class file path</th>\n" +
-                        "        <th width=\"5%\">dump class</th>\n" +
-                        "        <th width=\"5%\">kill</th>\n" +
-                        "    </thead>\n" +
-                        "    <tbody>");
-
-                int index = 0;
-                for (ServletRequestListener listener : newListeners) {
-                    out.write("<tr>");
-                    out.write(String.format("<td style=\"text-align:center\">%d</td><td>%s</td><td>%s</td><td>%s</td><td style=\"text-align:center\"><a href=\"?action=dump&className=%s\">dump</a></td><td style=\"text-align:center\"><a href=\"?action=kill&servletName=%s\">kill</a></td>"
-                            , index + 1
-                            , listener.getClass().getName()
-                            , listener.getClass().getClassLoader()
-                            , classFileIsExists(listener.getClass())
-                            , listener.getClass().getName()
-                            , listener.getClass().getName()));
-                    out.write("</tr>");
-                    index++;
+                // Scan Endpoints
+                List<ServerEndpointConfig> configs = null;
+                try {
+                    configs = getEndpointConfigs(request);
+                } catch (Exception e) {
+                    throw new RuntimeException(e);
                 }
-                out.write("</tbody></table>");
+                if (configs != null && configs.size() != 0) {
+                    out.write("<h4>Endpoints scan result</h4>");
+                    out.write("<table border=\"1\" cellspacing=\"0\" width=\"95%\" style=\"table-layout:fixed;word-break:break-all;background:#f2f2f2\">\n" +
+                            "    <thead>\n" +
+                            "        <th width=\"5%\">ID</th>\n" +
+                            "        <th width=\"10%\">URI path</th>\n" +
+                            "        <th width=\"20%\">Endpoint class</th>\n" +
+                            "        <th width=\"20%\">Endpoint classLoader</th>\n" +
+                            "        <th width=\"35%\">Endpoint class file path</th>\n" +
+                            "        <th width=\"5%\">dump class</th>\n" +
+                            "        <th width=\"5%\">kill</th>\n" +
+                            "    </thead>\n" +
+                            "    <tbody>");
+
+                    int index = 0;
+                    for (ServerEndpointConfig cfg : configs) {
+                        out.write("<tr>");
+                        out.write(String.format("<td style=\"text-align:center\">%d</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td style=\"text-align:center\"><a href=\"?action=dump&className=%s\">dump</a></td><td style=\"text-align:center\"><a href=\"#\">kill</a></td>"
+                                , index + 1
+                                , cfg.getPath()
+                                , cfg.getEndpointClass().getName()
+                                , cfg.getEndpointClass().getClassLoader().getClass().getName()
+                                , classFileIsExists(cfg.getEndpointClass())
+                                , cfg.getEndpointClass().getName()
+                                , cfg.getEndpointClass().getName()));
+                        out.write("</tr>");
+                        index++;
+                    }
+                    out.write("</tbody></table>");
+                }
             }
         %>
     </div>
