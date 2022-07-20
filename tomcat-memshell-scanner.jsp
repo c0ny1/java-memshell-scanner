@@ -391,14 +391,14 @@
                     throw new RuntimeException(e);
                 }
                 if (configs != null && configs.size() != 0) {
-                    out.write("<h4>Endpoints scan Endpoints</h4>");
+                    out.write("<h4>Endpoints scan result</h4>");
                     out.write("<table border=\"1\" cellspacing=\"0\" width=\"95%\" style=\"table-layout:fixed;word-break:break-all;background:#f2f2f2\">\n" +
                             "    <thead>\n" +
                             "        <th width=\"5%\">ID</th>\n" +
                             "        <th width=\"10%\">URI path</th>\n" +
-                            "        <th width=\"20%\">Endpoints class</th>\n" +
-                            "        <th width=\"20%\">Endpoints classLoader</th>\n" +
-                            "        <th width=\"35%\">Endpoints class file path</th>\n" +
+                            "        <th width=\"20%\">Endpoint class</th>\n" +
+                            "        <th width=\"20%\">Endpoint classLoader</th>\n" +
+                            "        <th width=\"35%\">Endpoint class file path</th>\n" +
                             "        <th width=\"5%\">dump class</th>\n" +
                             "        <th width=\"5%\">kill</th>\n" +
                             "    </thead>\n" +
