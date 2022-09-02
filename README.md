@@ -10,3 +10,6 @@
 
 ## 0x03 更多
 [Filter/Servlet型内存马的扫描抓捕与查杀](https://gv7.me/articles/2020/filter-servlet-type-memshell-scan-capture-and-kill/)
+
+## 0x04 更新
+添加Connector与Ws内存马检测逻辑与kill逻辑。

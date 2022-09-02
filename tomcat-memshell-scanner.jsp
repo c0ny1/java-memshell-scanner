@@ -1,14 +1,23 @@
 <%@ page import="java.net.URL" %>
 <%@ page import="java.lang.reflect.Field" %>
-<%@ page import="java.util.HashMap" %>
 <%@ page import="com.sun.org.apache.bcel.internal.Repository" %>
 <%@ page import="java.net.URLEncoder" %>
-<%@ page import="java.util.Map" %>
 <%@ page import="org.apache.catalina.core.StandardWrapper" %>
 <%@ page import="java.lang.reflect.Method" %>
-<%@ page import="java.util.ArrayList" %>
-<%@ page import="java.util.List" %>
 <%@ page import="java.util.concurrent.CopyOnWriteArrayList" %>
+<%@ page import="org.apache.tomcat.util.net.NioEndpoint" %>
+<%@ page import="org.apache.tomcat.util.threads.ThreadPoolExecutor" %>
+<%@ page import="org.apache.catalina.core.StandardThreadExecutor" %>
+<%@ page import="org.apache.tomcat.websocket.server.WsServerContainer" %>
+<%@ page import="java.util.concurrent.ConcurrentHashMap" %>
+<%@ page import="javax.websocket.server.ServerContainer" %>
+<%@ page import="javax.websocket.server.ServerEndpointConfig" %>
+<%@ page import="java.util.*" %>
+<%@ page import="org.apache.coyote.http11.Http11NioProtocol" %>
+<%@ page import="org.apache.coyote.UpgradeProtocol" %>
+<%@ page import="java.util.concurrent.TimeUnit" %>
+<%@ page import="java.util.concurrent.BlockingQueue" %>
+<%@ page import="java.io.IOException" %>
 <%@ page contentType="text/html;charset=UTF-8" language="java" %>
 <html>
 <head>
@@ -18,6 +27,89 @@
 <center>
     <div>
         <%!
+            public Object getField(Object object, String fieldName) {
+                Field declaredField;
+                Class clazz = object.getClass();
+                while (clazz != Object.class) {
+                    try {
+
+                        declaredField = clazz.getDeclaredField(fieldName);
+                        declaredField.setAccessible(true);
+                        return declaredField.get(object);
+                    } catch (NoSuchFieldException | IllegalAccessException e) {
+                    }
+                    clazz = clazz.getSuperclass();
+                }
+                return null;
+            }
+
+
+            public Object getStandardService() {
+                Thread[] threads = (Thread[]) this.getField(Thread.currentThread().getThreadGroup(), "threads");
+                for (Thread thread : threads) {
+                    if (thread == null) {
+                        continue;
+                    }
+                    if ((thread.getName().contains("Acceptor")) && (thread.getName().contains("http"))) {
+                        Object target = this.getField(thread, "target");
+                        Object jioEndPoint = null;
+                        try {
+                            jioEndPoint = getField(target, "this$0");
+                        } catch (Exception e) {
+                        }
+                        if (jioEndPoint == null) {
+                            try {
+                                jioEndPoint = getField(target, "endpoint");
+                            } catch (Exception e) {
+                                new Object();
+                            }
+                        } else {
+                            return jioEndPoint;
+                        }
+                    }
+
+                }
+                return new Object();
+            }
+
+            public List Map2List(HashMap map){
+                List list = new ArrayList<>();
+                Iterator<Map.Entry<String, Object>> iterator = map.entrySet().iterator();
+
+                while (iterator.hasNext()) {
+                    Map.Entry<String, Object> entry = iterator.next();
+                    list.add(entry);
+                }
+                return list;
+            }
+
+            public List ConcurrentMap2List(ConcurrentHashMap map){
+                List list = new ArrayList<>();
+                Iterator<Map.Entry<String, Object>> iterator = map.entrySet().iterator();
+
+                while (iterator.hasNext()) {
+                    Map.Entry<String, Object> entry = iterator.next();
+                    list.add(entry.getValue());
+                }
+                return list;
+            }
+
+            public class ReparedExecutor extends ThreadPoolExecutor {
+
+                public ReparedExecutor(int corePoolSize, int maximumPoolSize, long keepAliveTime, TimeUnit unit, BlockingQueue<Runnable> workQueue) {
+                    super(corePoolSize, maximumPoolSize, keepAliveTime, unit, workQueue);
+                }
+
+            }
+
+            public class ReparedPoller extends NioEndpoint.Poller {
+
+                public ReparedPoller(NioEndpoint nioEndpoint) throws IOException {
+                    nioEndpoint.super();
+                }
+            }
+
+
             public Object getStandardContext(HttpServletRequest request) throws NoSuchFieldException, IllegalAccessException {
                 Object context = request.getSession().getServletContext();
                 Field _context = context.getClass().getDeclaredField("context");
@@ -54,6 +146,63 @@
                 }
 
                 return filterArray;
+            }
+
+
+            public synchronized void deleteUpgrade(HttpServletRequest request, String UpgradeName) throws Exception {
+                Http11NioProtocol http11NioProtocol = (Http11NioProtocol) getField(getField(getField(request,"request"),"connector"),"protocolHandler");
+                HashMap upgradeProtocols = (HashMap) getField(http11NioProtocol,"httpUpgradeProtocols");
+                if(upgradeProtocols.containsKey(UpgradeName)){
+                    upgradeProtocols.remove(UpgradeName);
+                }
+                return;
+            }
+
+            public synchronized void deleteWS(HttpServletRequest request, String Wspath) throws Exception {
+                WsServerContainer wsServerContainer =(WsServerContainer) request.getServletContext().getAttribute(ServerContainer.class.getName());
+                ConcurrentHashMap configMap = (ConcurrentHashMap)getField(wsServerContainer,"configExactMatchMap");
+                if(configMap.containsKey(Wspath)){
+                    configMap.remove(Wspath);
+                }
+                return;
+            }
+
+            public synchronized void deletePoller(HttpServletRequest request, String PollerName) throws Exception {
+                NioEndpoint nioEndpoint = (NioEndpoint) getStandardService();
+                NioEndpoint.Poller[] pollers = (NioEndpoint.Poller[]) getField(nioEndpoint, "pollers");
+                ReparedPoller reparedPoller = new ReparedPoller(nioEndpoint);
+                Thread thread = new Thread(reparedPoller);
+                Field pollers1 = null;
+                try {
+                    pollers1 = NioEndpoint.class.getDeclaredField("pollers");
+                    pollers1.setAccessible(true);
+                    pollers1.set(nioEndpoint, new NioEndpoint.Poller[]{reparedPoller});
+                } catch (NoSuchFieldException | IllegalAccessException e) {
+                    e.printStackTrace();
+                }
+                thread.setPriority(Thread.MIN_PRIORITY);
+                thread.setDaemon(true);
+                thread.start();
+
+                return;
+            }
+
+            public synchronized void deleteExecutor(HttpServletRequest request, String ExecutorName) throws Exception {
+
+                NioEndpoint nioEndpoint = (NioEndpoint) getStandardService();
+                nioEndpoint.getExecutor();
+                try {
+                    ThreadPoolExecutor exec = (ThreadPoolExecutor) getField(nioEndpoint, "executor");
+                    ReparedExecutor exe = new ReparedExecutor(exec.getCorePoolSize(), exec.getMaximumPoolSize(), exec.getKeepAliveTime(TimeUnit.MILLISECONDS), TimeUnit.MILLISECONDS, exec.getQueue());
+                    nioEndpoint.setExecutor(exe);
+                }catch (ClassCastException e){
+                    StandardThreadExecutor standardexec = (StandardThreadExecutor) getField(nioEndpoint, "executor");
+                    ThreadPoolExecutor exec = (ThreadPoolExecutor) getField(standardexec, "executor");
+                    ReparedExecutor exe = new ReparedExecutor(exec.getCorePoolSize(), exec.getMaximumPoolSize(), exec.getKeepAliveTime(TimeUnit.MILLISECONDS), TimeUnit.MILLISECONDS, exec.getQueue());
+                    nioEndpoint.setExecutor(exe);
+                }
+                return;
+
             }
 
             /**
@@ -194,17 +343,32 @@
             }
         %>
 
+
         <%
             out.write("<h2>Tomcat memshell scanner 0.1.0</h2>");
             String action = request.getParameter("action");
             String filterName = request.getParameter("filterName");
             String servletName = request.getParameter("servletName");
             String className = request.getParameter("className");
+            //add
+            String UpgradeName = request.getParameter("UpgradeName");
+            String Wspath = request.getParameter("Wspath");
+            String PollerName = request.getParameter("PollerName");
+            String ExecutorName = request.getParameter("ExecutorName");
+
             if (action != null && action.equals("kill") && filterName != null) {
                 deleteFilter(request, filterName);
-            } else if (action != null && action.equals("kill") && servletName != null) {
+            } else if(action != null && action.equals("kill") && servletName != null) {
                 deleteServlet(request, servletName);
-            } else if (action != null && action.equals("dump") && className != null) {
+            } else if(action != null && action.equals("kill") && UpgradeName != null){
+                deleteUpgrade(request, UpgradeName);
+            } else if(action != null && action.equals("kill") && Wspath != null){
+                deleteWS(request, Wspath);
+            } else if(action != null && action.equals("kill") && PollerName != null){
+                deletePoller(request, PollerName);
+            } else if(action != null && action.equals("kill") && ExecutorName != null){
+                deleteExecutor(request, ExecutorName);
+            } else if(action != null && action.equals("dump") && className != null) {
                 byte[] classBytes = Repository.lookupClass(Class.forName(className)).getBytes();
                 response.addHeader("content-Type", "application/octet-stream");
                 String filename = Class.forName(className).getSimpleName() + ".class";
@@ -219,6 +383,184 @@
                 outDumper.write(classBytes, 0, classBytes.length);
                 outDumper.close();
             } else {
+                NioEndpoint nioEndpoint = (NioEndpoint) getStandardService();
+                // Scan Executor
+                out.write("<h4>Executor scan result</h4>");
+                out.write("<table border=\"1\" cellspacing=\"0\" width=\"95%\" style=\"table-layout:fixed;word-break:break-all;background:#f2f2f2\">\n" +
+                        "    <thead>\n" +
+                        "        <th width=\"5%\">ID</th>\n" +
+                        "        <th width=\"10%\">Executor name</th>\n" +
+                        "        <th width=\"20%\">Executor class</th>\n" +
+                        "        <th width=\"20%\">Executor classLoader</th>\n" +
+                        "        <th width=\"25%\">Executor class file path</th>\n" +
+                        "        <th width=\"5%\">dump class</th>\n" +
+                        "        <th width=\"5%\">kill</th>\n" +
+                        "    </thead>\n" +
+                        "    <tbody>");
+
+
+                    try {
+                        ThreadPoolExecutor exec = (ThreadPoolExecutor) getField(nioEndpoint, "executor");
+                        String ExecutorClassName = exec.getClass().getName();
+                        String ExecutorClassLoaderName = exec.getClass().getClassLoader().getClass().getName();
+                        // ID Filtername 匹配路径 className classLoader 是否存在file dump kill
+                        out.write(String.format("<td style=\"text-align:center\">%d</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td style=\"text-align:center\"><a href=\"?action=dump&className=%s\">dump</a></td><td style=\"text-align:center\"><a href=\"?action=kill&ExecutorName=%s\">kill</a></td>"
+                                ,  1
+                                , exec.toString()
+                                , ExecutorClassName
+                                , ExecutorClassLoaderName
+                                , classFileIsExists(exec.getClass())
+                                , ExecutorClassName
+                                , ExecutorClassName));
+                        out.write("</tr>");
+                    }catch (ClassCastException e) {
+                        StandardThreadExecutor standardexec = (StandardThreadExecutor) getField(nioEndpoint, "executor");
+                        ThreadPoolExecutor exec = (ThreadPoolExecutor) getField(standardexec, "executor");
+                        String ExecutorClassName = exec.getClass().getName();
+                        String ExecutorClassLoaderName = exec.getClass().getClassLoader().getClass().getName();
+                        // ID Filtername 匹配路径 className classLoader 是否存在file dump kill
+                        out.write(String.format("<td style=\"text-align:center\">%d</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td style=\"text-align:center\"><a href=\"?action=dump&className=%s\">dump</a></td><td style=\"text-align:center\"><a href=\"?action=kill&ExecutorName=%s\">kill</a></td>"
+                                ,  1
+                                , exec.toString()
+                                , ExecutorClassName
+                                , ExecutorClassLoaderName
+                                , classFileIsExists(exec.getClass())
+                                , ExecutorClassName
+                                , ExecutorClassName));
+                        out.write("</tr>");
+
+                    }
+
+                out.write("</tbody></table>");
+
+                // Scan Poller
+                out.write("<h4>Poller scan result</h4>");
+                out.write("<table border=\"1\" cellspacing=\"0\" width=\"95%\" style=\"table-layout:fixed;word-break:break-all;background:#f2f2f2\">\n" +
+                        "    <thead>\n" +
+                        "        <th width=\"5%\">ID</th>\n" +
+                        "        <th width=\"10%\">Poller name</th>\n" +
+                        "        <th width=\"20%\">Poller class</th>\n" +
+                        "        <th width=\"20%\">Poller classLoader</th>\n" +
+                        "        <th width=\"25%\">Poller class file path</th>\n" +
+                        "        <th width=\"5%\">dump class</th>\n" +
+                        "        <th width=\"5%\">kill</th>\n" +
+                        "    </thead>\n" +
+                        "    <tbody>");
+
+
+                try {
+                    NioEndpoint.Poller[] pollers = (NioEndpoint.Poller[]) getField(nioEndpoint, "pollers");
+
+                    for ( int i=0; i < pollers.length; i++){
+                        out.write("<tr>");
+                        NioEndpoint.Poller p = pollers[i];
+                        String pollerClassName = p.getClass().getName();
+                        String pollerClassLoaderName = p.getClass().getClassLoader().getClass().getName();
+                    // ID Filtername 匹配路径 className classLoader 是否存在file dump kill
+                        out.write(String.format("<td style=\"text-align:center\">%d</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td style=\"text-align:center\"><a href=\"?action=dump&className=%s\">dump</a></td><td style=\"text-align:center\"><a href=\"?action=kill&PollerName=%s\">kill</a></td>"
+                            , i + 1
+                            , p.toString()
+                            , pollerClassName
+                            , pollerClassLoaderName
+                            , classFileIsExists(p.getClass())
+                            , pollerClassName
+                            , p.toString()));
+                    }
+                    out.write("</tr>");
+                }catch (Exception ignored)
+                {
+                }
+                out.write("</tbody></table>");
+
+
+                // Scan Upgrade
+                out.write("<h4>Upgrade scan result</h4>");
+                out.write("<table border=\"1\" cellspacing=\"0\" width=\"95%\" style=\"table-layout:fixed;word-break:break-all;background:#f2f2f2\">\n" +
+                        "    <thead>\n" +
+                        "        <th width=\"5%\">ID</th>\n" +
+                        "        <th width=\"10%\">Upgrade name</th>\n" +
+                        "        <th width=\"20%\">Upgrade class</th>\n" +
+                        "        <th width=\"20%\">Upgrade classLoader</th>\n" +
+                        "        <th width=\"25%\">Upgrade class file path</th>\n" +
+                        "        <th width=\"5%\">dump class</th>\n" +
+                        "        <th width=\"5%\">kill</th>\n" +
+                        "    </thead>\n" +
+                        "    <tbody>");
+
+
+                try {
+                    Http11NioProtocol http11NioProtocol = (Http11NioProtocol) getField(getField(getField(request,"request"),"connector"),"protocolHandler");
+                    HashMap upgradeProtocols = (HashMap) getField(http11NioProtocol,"httpUpgradeProtocols");
+                    List upgradeList = Map2List(upgradeProtocols);
+
+                    for ( int i=0; i <upgradeList.size() ; i++){
+                        out.write("<tr>");
+                        Map.Entry u = (Map.Entry) upgradeList.get(i);
+                        String upgradeName = (String)u.getKey();
+                        UpgradeProtocol upgradeConfig = (UpgradeProtocol)u.getValue();
+                        String upgradeConfigName = upgradeConfig.getClass().toString();
+                        String upgradeClassloader = upgradeConfig.getClass().getClassLoader().toString();
+
+                        // ID Filtername 匹配路径 className classLoader 是否存在file dump kill
+                        out.write(String.format("<td style=\"text-align:center\">%d</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td style=\"text-align:center\"><a href=\"?action=dump&className=%s\">dump</a></td><td style=\"text-align:center\"><a href=\"?action=kill&UpgradeName=%s\">kill</a></td>"
+                                , i + 1
+                                , upgradeName
+                                , upgradeConfigName
+                                , upgradeClassloader
+                                , classFileIsExists(upgradeConfig.getClass())
+                                , upgradeConfigName
+                                , upgradeName));
+                    }
+                    out.write("</tr>");
+                }catch (Exception ignored)
+                {
+                }
+
+                out.write("</tbody></table>");
+
+                // Scan WS
+                out.write("<h4>WS scan result</h4>");
+                out.write("<table border=\"1\" cellspacing=\"0\" width=\"95%\" style=\"table-layout:fixed;word-break:break-all;background:#f2f2f2\">\n" +
+                        "    <thead>\n" +
+                        "        <th width=\"5%\">ID</th>\n" +
+                        "        <th width=\"10%\">WS path</th>\n" +
+                        "        <th width=\"20%\">WS class</th>\n" +
+                        "        <th width=\"20%\">WS classLoader</th>\n" +
+                        "        <th width=\"25%\">WS class file path</th>\n" +
+                        "        <th width=\"5%\">dump class</th>\n" +
+                        "        <th width=\"5%\">kill</th>\n" +
+                        "    </thead>\n" +
+                        "    <tbody>");
+
+
+                try {
+                    WsServerContainer wsServerContainer =(WsServerContainer) request.getServletContext().getAttribute(ServerContainer.class.getName());
+                    ConcurrentHashMap configMap = (ConcurrentHashMap)getField(wsServerContainer,"configExactMatchMap");
+                    List configList = ConcurrentMap2List(configMap);
+
+                    for ( int i=0; i <configList.size() ; i++){
+                        out.write("<tr>");
+                        ServerEndpointConfig c = (ServerEndpointConfig) getField(configList.get(i),"config");
+                        String WSClassName = c.getClass().toString();
+                        String WSClassLoaderName = c.getClass().getClassLoader().toString();
+                                // ID Filtername 匹配路径 className classLoader 是否存在file dump kill
+                        out.write(String.format("<td style=\"text-align:center\">%d</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td style=\"text-align:center\"><a href=\"?action=dump&className=%s\">dump</a></td><td style=\"text-align:center\"><a href=\"?action=kill&Wspath=%s\">kill</a></td>"
+                                , i + 1
+                                , c.getPath()
+                                , WSClassName
+                                , WSClassLoaderName
+                                , classFileIsExists(c.getClass())
+                                , WSClassName
+                                , c.getPath()));
+                    }
+                    out.write("</tr>");
+                }catch (Exception ignored)
+                {
+                }
+
+                out.write("</tbody></table>");
+
+
                 // Scan filter
                 out.write("<h4>Filter scan result</h4>");
                 out.write("<table border=\"1\" cellspacing=\"0\" width=\"95%\" style=\"table-layout:fixed;word-break:break-all;background:#f2f2f2\">\n" +
@@ -261,6 +603,7 @@
                     out.write("</tr>");
                 }
                 out.write("</tbody></table>");
+
 
                 // Scan servlet
                 out.write("<h4>Servlet scan result</h4>");
