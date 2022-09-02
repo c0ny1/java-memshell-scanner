@@ -345,7 +345,7 @@
 
 
         <%
-            out.write("<h2>Tomcat memshell scanner 0.1.0</h2>");
+            out.write("<h2>Tomcat memshell scanner 0.1.1</h2>");
             String action = request.getParameter("action");
             String filterName = request.getParameter("filterName");
             String servletName = request.getParameter("servletName");
@@ -704,7 +704,7 @@
         %>
     </div>
     <br/>
-    code by c0ny1
+    code by c0ny1 , edited by bluE0 2022.9.2.
 </center>
 </body>
 </html>
