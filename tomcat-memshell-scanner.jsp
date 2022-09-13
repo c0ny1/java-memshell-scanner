@@ -18,6 +18,7 @@
 <%@ page import="java.util.concurrent.TimeUnit" %>
 <%@ page import="java.util.concurrent.BlockingQueue" %>
 <%@ page import="java.io.IOException" %>
+<%@ page import="org.apache.jasper.servlet.JspServletWrapper" %>
 <%@ page contentType="text/html;charset=UTF-8" language="java" %>
 <html>
 <head>
@@ -83,15 +84,25 @@
                 return list;
             }
 
-            public List ConcurrentMap2List(ConcurrentHashMap map){
+
+            public List ConcurrentMap2List(ConcurrentHashMap map , String option){
                 List list = new ArrayList<>();
                 Iterator<Map.Entry<String, Object>> iterator = map.entrySet().iterator();
-
+                if (option == "Object"){
                 while (iterator.hasNext()) {
                     Map.Entry<String, Object> entry = iterator.next();
                     list.add(entry.getValue());
                 }
                 return list;
+                }
+                else if (option == "Entry"){
+                    while (iterator.hasNext()) {
+                        Map.Entry<String, Object> entry = iterator.next();
+                        list.add(entry);
+                    }
+                    return list;
+                }
+                return null ;
             }
 
             public class ReparedExecutor extends ThreadPoolExecutor {
@@ -148,6 +159,15 @@
                 return filterArray;
             }
 
+            //deleteMS
+            public synchronized void deleteJasper(HttpServletRequest request, String Jspspath) throws Exception {
+                ConcurrentHashMap JspsHashMap = (ConcurrentHashMap) getField(getField(getField(getField(getField(request,"mappingData"),"wrapper"),"instance"),"rctxt"),"jsps");
+                if(JspsHashMap.containsKey(Jspspath)){
+                    JspsHashMap.remove(Jspspath);
+                }
+                return;
+            }
+
 
             public synchronized void deleteUpgrade(HttpServletRequest request, String UpgradeName) throws Exception {
                 Http11NioProtocol http11NioProtocol = (Http11NioProtocol) getField(getField(getField(request,"request"),"connector"),"protocolHandler");
@@ -202,7 +222,6 @@
                     nioEndpoint.setExecutor(exe);
                 }
                 return;
-
             }
 
             /**
@@ -321,7 +340,6 @@
                 if (clazz == null) {
                     return "class is null";
                 }
-
                 String className = clazz.getName();
                 String classNamePath = className.replace(".", "/") + ".class";
                 URL is = clazz.getClassLoader().getResource(classNamePath);
@@ -331,6 +349,22 @@
                     return is.getPath();
                 }
             }
+
+//            String classFileIsExists(String name) {
+//                if (name == null) {
+//                    return "class is null";
+//                }
+//
+//                String className = clazz.getName();
+//                String classNamePath = className.replace(".", "/") + ".class";
+//                URL is = clazz.getClassLoader().getResource(classNamePath);
+//                if (is == null) {
+//                    return "在磁盘上没有对应class文件，可能是内存马";
+//                } else {
+//                    return is.getPath();
+//                }
+//            }
+
 
             String arrayToString(String[] str) {
                 String res = "[";
@@ -345,7 +379,7 @@
 
 
         <%
-            out.write("<h2>Tomcat memshell scanner 0.1.1</h2>");
+            out.write("<h2>Tomcat memshell scanner 0.1.2</h2>");
             String action = request.getParameter("action");
             String filterName = request.getParameter("filterName");
             String servletName = request.getParameter("servletName");
@@ -355,6 +389,7 @@
             String Wspath = request.getParameter("Wspath");
             String PollerName = request.getParameter("PollerName");
             String ExecutorName = request.getParameter("ExecutorName");
+            String Jspspath = request.getParameter("Jspspath");
 
             if (action != null && action.equals("kill") && filterName != null) {
                 deleteFilter(request, filterName);
@@ -368,6 +403,8 @@
                 deletePoller(request, PollerName);
             } else if(action != null && action.equals("kill") && ExecutorName != null){
                 deleteExecutor(request, ExecutorName);
+            } else if(action != null && action.equals("kill") && Jspspath != null){
+                deleteJasper(request, Jspspath);
             } else if(action != null && action.equals("dump") && className != null) {
                 byte[] classBytes = Repository.lookupClass(Class.forName(className)).getBytes();
                 response.addHeader("content-Type", "application/octet-stream");
@@ -536,14 +573,14 @@
                 try {
                     WsServerContainer wsServerContainer =(WsServerContainer) request.getServletContext().getAttribute(ServerContainer.class.getName());
                     ConcurrentHashMap configMap = (ConcurrentHashMap)getField(wsServerContainer,"configExactMatchMap");
-                    List configList = ConcurrentMap2List(configMap);
+                    List configList = ConcurrentMap2List(configMap,"Object");
 
                     for ( int i=0; i <configList.size() ; i++){
                         out.write("<tr>");
                         ServerEndpointConfig c = (ServerEndpointConfig) getField(configList.get(i),"config");
                         String WSClassName = c.getClass().toString();
                         String WSClassLoaderName = c.getClass().getClassLoader().toString();
-                                // ID Filtername 匹配路径 className classLoader 是否存在file dump kill
+                                // ID Wsname 匹配路径 className classLoader 是否存在file dump kill
                         out.write(String.format("<td style=\"text-align:center\">%d</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td style=\"text-align:center\"><a href=\"?action=dump&className=%s\">dump</a></td><td style=\"text-align:center\"><a href=\"?action=kill&Wspath=%s\">kill</a></td>"
                                 , i + 1
                                 , c.getPath()
@@ -558,6 +595,49 @@
                 {
                 }
 
+                out.write("</tbody></table>");
+
+                // Scan Jasper
+                out.write("<h4>Jasper scan result</h4>");
+                out.write("<table border=\"1\" cellspacing=\"0\" width=\"95%\" style=\"table-layout:fixed;word-break:break-all;background:#f2f2f2\">\n" +
+                        "    <thead>\n" +
+                        "        <th width=\"5%\">ID</th>\n" +
+                        "        <th width=\"10%\">Jsp name</th>\n" +
+                        "        <th width=\"20%\">Jsp class</th>\n" +
+                        "        <th width=\"20%\">Jsp classLoader</th>\n" +
+                        "        <th width=\"25%\">Jsp class file path</th>\n" +
+                        "        <th width=\"5%\">dump class</th>\n" +
+                        "        <th width=\"5%\">kill</th>\n" +
+                        "    </thead>\n" +
+                        "    <tbody>");
+
+//                ConcurrentHashMap concurrentHashMap = (ConcurrentHashMap) getField(getField(getField(getField(getField(request,"mappingData"),"wrapper"),"instance"),"rctxt"),"jsps");
+//                JspServlet jspServlet = (JspServlet) getField(getField(getField(request,"mappingData"),"wrapper"),"instance");
+                ConcurrentHashMap concurrentHashMap = (ConcurrentHashMap) getField(getField(getField(getField(getField(getField(request,"request"),"mappingData"),"wrapper"),"instance"),"rctxt"),"jsps");
+//                getField(request,"mappingData");
+//                ConcurrentHashMap concurrentHashMap = null;
+                List JspsList = ConcurrentMap2List(concurrentHashMap,"Entry");
+
+                for (int i = 0; i < JspsList.size(); i++) {
+                    out.write("<tr>");
+                    Map.Entry j = (Map.Entry) JspsList.get(i);
+                    String jspspath = (String)j.getKey();
+                    JspServletWrapper jspServletWrapper = (JspServletWrapper)j.getValue();
+//                    String JspsClassName = (String)getField(getField(jspServletWrapper,"ctxt"),"className")+".class";
+                    Servlet servlet = (Servlet)getField(jspServletWrapper,"theServlet");
+                    String JspsClassName = servlet.getClass().getName();
+                    String JspsClassLoader = servlet.getClass().getClassLoader().toString();
+                    // ID Jspname 匹配路径 className classLoader 是否存在file dump kill
+                    out.write(String.format("<td style=\"text-align:center\">%d</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td style=\"text-align:center\"><a href=\"?action=dump&className=%s\">dump</a></td><td style=\"text-align:center\"><a href=\"?action=kill&Jspspath=%s\">kill</a></td>"
+                            , i + 1
+                            , jspspath
+                            , JspsClassName
+                            , JspsClassLoader
+                            , classFileIsExists(servlet.getClass())
+                            , JspsClassName
+                            , jspspath));
+                    out.write("</tr>");
+                }
                 out.write("</tbody></table>");
 
 
@@ -704,7 +784,8 @@
         %>
     </div>
     <br/>
-    code by c0ny1 , edited by bluE0 2022.9.2.
+    code by c0ny1.
+    edited by bluE0.
 </center>
 </body>
 </html>

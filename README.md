@@ -16,4 +16,5 @@
 ## 0x04 更新
 添加Connector与Ws内存马检测逻辑与kill逻辑。
 ![1662094214956](media/16620944080148/1662094214956.jpg)
-
+添加Jasper内存马检测逻辑与kill逻辑。
+![Jasper](media/16620944080148/Jasper.png)
