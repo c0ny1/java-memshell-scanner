@@ -8,5 +8,9 @@
 
 ![Tomcat内存马扫描结果展示](doc/listener.png)
 
+增加Tomcat-Value、Timer、Websocket 、Upgrade 、Executor等内存马检测。
+
+![Tomcat内存马扫描结果展示](doc/othershell.png)
+
 ## 0x03 更多
 [Filter/Servlet型内存马的扫描抓捕与查杀](https://gv7.me/articles/2020/filter-servlet-type-memshell-scan-capture-and-kill/)
