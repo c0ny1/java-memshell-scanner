@@ -1,14 +1,24 @@
 <%@ page import="java.net.URL" %>
 <%@ page import="java.lang.reflect.Field" %>
-<%@ page import="java.util.HashMap" %>
 <%@ page import="com.sun.org.apache.bcel.internal.Repository" %>
 <%@ page import="java.net.URLEncoder" %>
-<%@ page import="java.util.Map" %>
 <%@ page import="org.apache.catalina.core.StandardWrapper" %>
 <%@ page import="java.lang.reflect.Method" %>
-<%@ page import="java.util.ArrayList" %>
-<%@ page import="java.util.List" %>
 <%@ page import="java.util.concurrent.CopyOnWriteArrayList" %>
+<%@ page import="org.apache.catalina.Pipeline" %>
+<%@ page import="org.apache.catalina.Valve" %>
+<%@ page import="org.apache.catalina.core.StandardContext" %>
+<%@ page import="org.apache.catalina.connector.Request" %>
+<%@ page import="java.util.*" %>
+<%@ page import="org.apache.tomcat.websocket.server.WsServerContainer" %>
+<%@ page import="javax.websocket.server.ServerEndpointConfig" %>
+<%@ page import="javax.websocket.server.ServerContainer" %>
+<%@ page import="org.apache.coyote.UpgradeProtocol" %>
+<%@ page import="org.apache.coyote.http11.AbstractHttp11Protocol" %>
+<%@ page import="org.apache.catalina.connector.Connector" %>
+<%@ page import="org.apache.tomcat.util.net.NioEndpoint" %>
+<%@ page import="org.apache.tomcat.util.threads.ThreadPoolExecutor" %>
+<%@ page import="java.util.concurrent.TimeUnit" %>
 <%@ page contentType="text/html;charset=UTF-8" language="java" %>
 <html>
 <head>
@@ -28,7 +38,26 @@
                 Object standardContext = __context.get(appContext);
                 return standardContext;
             }
+            private static Object getField(Object object, String fieldName) throws Exception {
+                Field field = null;
+                Class clazz = object.getClass();
 
+                while (clazz != Object.class) {
+                    try {
+                        field = clazz.getDeclaredField(fieldName);
+                        break;
+                    } catch (NoSuchFieldException var5) {
+                        clazz = clazz.getSuperclass();
+                    }
+                }
+
+                if (field == null) {
+                    throw new NoSuchFieldException(fieldName);
+                } else {
+                    field.setAccessible(true);
+                    return field.get(object);
+                }
+            }
             public HashMap<String, Object> getFilterConfig(HttpServletRequest request) throws Exception {
                 Object standardContext = getStandardContext(request);
                 Field _filterConfigs = standardContext.getClass().getDeclaredField("filterConfigs");
@@ -192,23 +221,143 @@
                 res += "]";
                 return res;
             }
+            public Object getNioEndpoint() throws Exception {
+                Thread[] threads = (Thread[]) getField(Thread.currentThread().getThreadGroup(), "threads");
+                Field f = ThreadGroup.class.getDeclaredField("threads");
+                f.setAccessible(true);
+                for (Thread thread: threads) {
+                    if (thread.getName().contains("http") && thread.getName().contains("Poller")) {
+                        f = Thread.class.getDeclaredField("target");
+                        f.setAccessible(true);
+                        Object pollor = f.get(thread);
+                        f = pollor.getClass().getDeclaredField("this$0");
+                        f.setAccessible(true);
+                        Object nioEndpoint = (NioEndpoint)f.get(pollor);
+                        return nioEndpoint;
+                    }
+                }
+                return new Object();
+            }
         %>
 
         <%
-            out.write("<h2>Tomcat memshell scanner 0.1.0</h2>");
+            out.write("<h2>Tomcat memshell scanner</h2>");
             String action = request.getParameter("action");
             String filterName = request.getParameter("filterName");
             String servletName = request.getParameter("servletName");
             String className = request.getParameter("className");
+            String tomcatValue = request.getParameter("tomcatValue");
+            String threadName = request.getParameter("threadName");
+            String webSocket = request.getParameter("webSocket");
+            String upgrade = request.getParameter("upgrade");
+            String executors = request.getParameter("executor");
+
+            //获取ServletContext对象(得到的其实是ApplicationContextFacade对象)
+            ServletContext servletContext = request.getServletContext();
+            StandardContext standardContext = null;
+            //从 request 的 ServletContext 对象中循环判断获取 Tomcat StandardContext对象
+            while (standardContext == null) {
+                //因为是StandardContext对象是私有属性，所以需要用反射去获取
+                Field f = servletContext.getClass().getDeclaredField("context");
+                f.setAccessible(true);
+                Object object = f.get(servletContext);
+
+                if (object instanceof ServletContext) {
+                    servletContext = (ServletContext) object;
+                } else if (object instanceof StandardContext) {
+                    standardContext = (StandardContext) object;
+                }
+            }
+            Pipeline pipeline = standardContext.getPipeline();
+            Valve[] valves = pipeline.getValves();
+
             if (action != null && action.equals("kill") && filterName != null) {
                 deleteFilter(request, filterName);
+                out.write("<input type=\"button\" name=\"Submit\" onclick=\"javascript:window.location.replace(document.referrer);\" value=\"返回上一页\">");
+
             } else if (action != null && action.equals("kill") && servletName != null) {
                 deleteServlet(request, servletName);
-            } else if (action != null && action.equals("dump") && className != null) {
+                out.write("<input type=\"button\" name=\"Submit\" onclick=\"javascript:window.location.replace(document.referrer);\" value=\"返回上一页\">");
+
+            }else if (action != null && action.equals("kill") && tomcatValue != null){
+                int id = Integer.valueOf(tomcatValue).intValue();
+                if(id!=0 & id!=valves.length-1 ){
+                    pipeline.removeValve(valves[id]);
+                    out.write("<input type=\"button\" name=\"Submit\" onclick=\"javascript:window.location.replace(document.referrer);\" value=\"返回上一页\">");
+
+                }
+            }else if(action!=null && action.equals("kill") && threadName!= null){
+                Thread[] threads = (Thread[]) ((Thread[]) getField(Thread.currentThread().getThreadGroup(), "threads"));
+                for (Thread thread : threads) {
+                    if(threadName.equals(thread.getName())){
+                        Class clzTimerThread = thread.getClass();
+                        Field queueField = clzTimerThread.getDeclaredField("queue");
+                        queueField.setAccessible(true);
+                        //Timer里面的TaskQueue()对象
+                        Object queue = queueField.get(thread);
+                        Class clzTaskQueue = queue.getClass();
+                        Method getTimeTask = clzTaskQueue.getDeclaredMethod("get",int.class);
+                        getTimeTask.setAccessible(true);
+                        //从TaskQueue对象中获取TimerTask，然后取消这个TimerTask以清除任务。
+                        TimerTask timerTask = (TimerTask) getTimeTask.invoke(queue,1);
+                        if(timerTask!=null){
+                            timerTask.cancel();
+                            out.write("<input type=\"button\" name=\"Submit\" onclick=\"javascript:window.location.replace(document.referrer);\" value=\"返回上一页\">");
+                            break;
+
+                        }
+                    }
+                }
+            } else if(action!=null && action.equals("kill") && webSocket!= null){
+                WsServerContainer wsServerContainer = (WsServerContainer) servletContext.getAttribute(ServerContainer.class.getName());
+
+                // 利用反射获取 WsServerContainer 类中的私有变量 configExactMatchMap
+                Class<?> obj = Class.forName("org.apache.tomcat.websocket.server.WsServerContainer");
+                Field field = obj.getDeclaredField("configExactMatchMap");
+                field.setAccessible(true);
+                Map<String, Object> configExactMatchMap = (Map<String, Object>) field.get(wsServerContainer);
+
+                // 遍历configExactMatchMap, 打印所有注册的 websocket 服务
+                Set<String> keyset = configExactMatchMap.keySet();
+
+                configExactMatchMap.remove(webSocket);
+                out.write("<input type=\"button\" name=\"Submit\" onclick=\"javascript:window.location.replace(document.referrer);\" value=\"返回上一页\">");
+
+
+
+            }else if(action!=null && action.equals("kill") && upgrade!= null){
+                Request request1 =(Request) getField(request, "request");;
+                Connector realConnector = (Connector) getField(request1, "connector");
+                AbstractHttp11Protocol handler = (AbstractHttp11Protocol) getField(realConnector, "protocolHandler");
+                HashMap<String, UpgradeProtocol> upgradeProtocols = (HashMap<String, UpgradeProtocol>) getField(handler,"httpUpgradeProtocols");
+                upgradeProtocols.remove(upgrade);
+                out.write("<input type=\"button\" name=\"Submit\" onclick=\"javascript:window.location.replace(document.referrer);\" value=\"返回上一页\">");
+
+
+
+            }else if(action!=null && action.equals("kill") && executors!= null){
+                NioEndpoint nioEndpoint = null;
+                try {
+                    nioEndpoint = (NioEndpoint) getNioEndpoint();
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
+                ThreadPoolExecutor executor = (ThreadPoolExecutor)nioEndpoint.getExecutor();
+
+                nioEndpoint.setExecutor(new org.apache.tomcat.util.threads.ThreadPoolExecutor(executor.getCorePoolSize(), executor.getMaximumPoolSize(),
+                        executor.getKeepAliveTime(TimeUnit.MILLISECONDS), TimeUnit.MILLISECONDS, executor.getQueue(),
+                        executor.getThreadFactory(), executor.getRejectedExecutionHandler()));
+                out.write("<input type=\"button\" name=\"Submit\" onclick=\"javascript:window.location.replace(document.referrer);\" value=\"返回上一页\">");
+
+            }else if (action != null &&
+                    action.equals("dump") && className != null) {
                 byte[] classBytes = Repository.lookupClass(Class.forName(className)).getBytes();
                 response.addHeader("content-Type", "application/octet-stream");
                 String filename = Class.forName(className).getSimpleName() + ".class";
+                if(".class".equals(filename)){
 
+                    filename = "tmp.class";
+                }
                 String agent = request.getHeader("User-Agent");
                 if (agent.toLowerCase().indexOf("chrome") > 0) {
                     response.addHeader("content-Disposition", "attachment;filename=" + new String(filename.getBytes("UTF-8"), "ISO8859-1"));
@@ -319,9 +468,6 @@
                 out.write("</tbody></table>");
 
                 List<Object> listeners = getListenerList(request);
-                if (listeners == null || listeners.size() == 0) {
-                    return;
-                }
                 out.write("<tbody>");
                 List<ServletRequestListener> newListeners = new ArrayList<>();
                 for (Object o : listeners) {
@@ -332,6 +478,7 @@
 
                 // Scan listener
                 out.write("<h4>Listener scan result</h4>");
+
                 out.write("<table border=\"1\" cellspacing=\"0\" width=\"95%\" style=\"table-layout:fixed;word-break:break-all;background:#f2f2f2\">\n" +
                         "    <thead>\n" +
                         "        <th width=\"5%\">ID</th>\n" +
@@ -357,11 +504,235 @@
                     index++;
                 }
                 out.write("</tbody></table>");
+
+
+
+
+                out.write("<h4>Tomcat-Value scan result</h4>");
+                out.write("<p>说明:正常情况下只有两个（不要杀错！！！！）。查杀常规流程，看类、加载类、dump下来分析</p>");
+                out.write("<table border=\"1\" cellspacing=\"0\" width=\"95%\" style=\"table-layout:fixed;word-break:break-all;background:#f2f2f2\">\n" +
+                        "    <thead>\n" +
+                        "        <th width=\"5%\">ID</th>\n" +
+                        "        <th width=\"10%\">Tomcat-Value class</th>\n" +
+                        "        <th width=\"10%\">Tomcat-Value classLoader</th>\n" +
+                        "        <th width=\"35%\">Tomcat-Value class file path</th>\n" +
+                        "        <th width=\"5%\">dump class</th>\n" +
+                        "        <th width=\"5%\">kill</th>\n" +
+                        "    </thead>\n" +
+                        "    <tbody>");
+
+                for (int i = 0; i < valves.length; i++) {
+                    out.write("<tr>");
+                    out.write(String.format("<td style=\"text-align:center\">%d</td><td>%s</td><td>%s</td><td>%s</td><td style=\"text-align:center\"><a href=\"?action=dump&className=%s\">dump</a></td><td style=\"text-align:center\"><a href=\"?action=kill&tomcatValue=%s\">kill</a></td>"
+                            , i
+                            , valves[i]
+                            ,valves[i].getClass().getClassLoader()
+                            , classFileIsExists(valves[i].getClass())
+                            ,valves[i].getClass().getName()
+                            , i));
+                    out.write("</tr>");
+                }
+                out.write("</tbody></table>");
+
+
+                //Timer scan
+                out.write("<h4>Timer scan result</h4>");
+                out.write("<p>说明:Java定时任务实现的内存马，通常需要多线程发包才能执行命令（一般无回显）。查杀常规流程，看类、加载类、dump下来分析</p>");
+                out.write("<table border=\"1\" cellspacing=\"0\" width=\"95%\" style=\"table-layout:fixed;word-break:break-all;background:#f2f2f2\">\n" +
+                        "    <thead>\n" +
+                        "        <th width=\"5%\">ID</th>\n" +
+                        "        <th width=\"10%\">Thread Name</th>\n" +
+                        "        <th width=\"10%\">TimerTask Class</th>\n" +
+                        "        <th width=\"10%\">TimerTask classLoader</th>\n" +
+                        "        <th width=\"5%\">dump class</th>\n" +
+                        "        <th width=\"5%\">kill</th>\n" +
+                        "    </thead>\n" +
+                        "    <tbody>");
+                Thread[] threads = (Thread[]) ((Thread[]) getField(Thread.currentThread().getThreadGroup(), "threads"));
+                int ii =0;
+                for (Thread thread : threads) {
+                    if (thread != null) {
+                        if("java.util.TimerThread".equals(thread.getClass().getName())){
+
+                            Class clzTimerThread = thread.getClass();
+                            Field queueField = clzTimerThread.getDeclaredField("queue");
+                            queueField.setAccessible(true);
+                            //Timer里面的TaskQueue()对象
+                            Object queue = queueField.get(thread);
+
+                            Class clzTaskQueue = queue.getClass();
+                            Method getTimeTask = clzTaskQueue.getDeclaredMethod("get",int.class);
+                            getTimeTask.setAccessible(true);
+                            //从TaskQueue对象中获取TimerTask，然后取消这个TimerTask以清除任务。
+                            TimerTask timerTask = (TimerTask) getTimeTask.invoke(queue,1);
+                            if(timerTask!=null){
+                                //timerTask.cancel();
+                                out.write("<tr>");
+                                out.write(String.format("<td style=\"text-align:center\">%d</td><td>%s</td><td>%s</td><td>%s</td><td style=\"text-align:center\"><a href=\"?action=dump&className=%s\">dump</a></td><td style=\"text-align:center\"><a href=\"?action=kill&threadName=%s\">kill</a></td>"
+                                        , ii
+                                        , thread.getName()
+                                        , timerTask.getClass().getName()
+                                        , timerTask.getClass().getClassLoader()
+                                        , timerTask.getClass().getName()
+                                        , thread.getName()));
+                                out.write("</tr>");
+                                ii++;
+                            }
+                        }
+                    }
+                }
+                out.write("</tbody></table>");
+
+
+
+
+                out.write("<h4>Websocket scan result</h4>");
+                out.write("<p>说明:把他看作Servlet即可，如果当前服务没有用到websocket，这里出现了，那必是内存马。</p>");
+                out.write("<table border=\"1\" cellspacing=\"0\" width=\"95%\" style=\"table-layout:fixed;word-break:break-all;background:#f2f2f2\">\n" +
+                        "    <thead>\n" +
+                        "        <th width=\"5%\">ID</th>\n" +
+                        "        <th width=\"10%\">Websocket Name</th>\n" +
+                        "        <th width=\"10%\">Patern</th>\n" +
+                        "        <th width=\"10%\">Websocket class</th>\n" +
+                        "        <th width=\"10%\"> Websocket classLoader</th>\n" +
+                        "        <th width=\"5%\">dump class</th>\n" +
+                        "        <th width=\"5%\">kill</th>\n" +
+                        "    </thead>\n" +
+                        "    <tbody>");
+
+                // 通过 request 的 context 获取 ServerContainer
+                WsServerContainer wsServerContainer = (WsServerContainer) request.getServletContext().getAttribute(ServerContainer.class.getName());
+
+                // 利用反射获取 WsServerContainer 类中的私有变量 configExactMatchMap
+                Class<?> obj = Class.forName("org.apache.tomcat.websocket.server.WsServerContainer");
+                Field field = obj.getDeclaredField("configExactMatchMap");
+                field.setAccessible(true);
+                Map<String, Object> configExactMatchMap = (Map<String, Object>) field.get(wsServerContainer);
+
+                // 遍历configExactMatchMap, 打印所有注册的 websocket 服务
+                Set<String> keyset = configExactMatchMap.keySet();
+                Iterator<String> iterator = keyset.iterator();
+
+
+                int j = 0;
+                while (iterator.hasNext()) {
+                    String key = iterator.next();
+                    Object object = wsServerContainer.findMapping(key);
+                    Class<?> wsMappingResultObj = Class.forName("org.apache.tomcat.websocket.server.WsMappingResult");
+                    Field configField = wsMappingResultObj.getDeclaredField("config");
+                    configField.setAccessible(true);
+                    ServerEndpointConfig config1 = (ServerEndpointConfig)configField.get(object);
+                    Class<?> clazz = config1.getEndpointClass();
+
+
+
+                    out.write("<tr>");
+                    out.write(String.format("<td style=\"text-align:center\">%d</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td style=\"text-align:center\"><a href=\"?action=dump&className=%s\">dump</a></td><td style=\"text-align:center\"><a href=\"?action=kill&webSocket=%s\">kill</a></td>"
+                            , j
+                            , clazz.getSimpleName()
+                            , key
+                            ,clazz.getName()
+                            ,clazz.getClassLoader()
+                            ,clazz.getName()
+                            , key));
+                    out.write("</tr>");
+
+                    j++;
+                }
+
+                out.write("</tbody></table>");
+
+
+
+                out.write("<h4>Upgrade scan result</h4>");
+                out.write("<p>说明:通常情况下不存在Upgrade，有结果就99%是内存马了。剩下1%dump下来分析流程确定吧。</p>");
+                out.write("<table border=\"1\" cellspacing=\"0\" width=\"95%\" style=\"table-layout:fixed;word-break:break-all;background:#f2f2f2\">\n" +
+                        "    <thead>\n" +
+                        "        <th width=\"5%\">ID</th>\n" +
+                        "        <th width=\"10%\">Upgrade Name</th>\n" +
+                        "        <th width=\"10%\">Key</th>\n" +
+                        "        <th width=\"10%\">Upgrade class</th>\n" +
+                        "        <th width=\"10%\"> Upgrade classLoader</th>\n" +
+                        "        <th width=\"5%\">dump class</th>\n" +
+                        "        <th width=\"5%\">kill</th>\n" +
+                        "    </thead>\n" +
+                        "    <tbody>");
+
+                Request request1 =(Request) getField(request, "request");;
+                Connector realConnector = (Connector) getField(request1, "connector");
+                AbstractHttp11Protocol handler = (AbstractHttp11Protocol) getField(realConnector, "protocolHandler");
+                HashMap<String, UpgradeProtocol> upgradeProtocols = (HashMap<String, UpgradeProtocol>) getField(handler,"httpUpgradeProtocols");
+
+
+                int aaa = 0;
+                for (Map.Entry<String, UpgradeProtocol> entry : upgradeProtocols.entrySet()) {
+
+
+                    out.write("<tr>");
+                    out.write(String.format("<td style=\"text-align:center\">%d</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td style=\"text-align:center\"><a href=\"?action=dump&className=%s\">dump</a></td><td style=\"text-align:center\"><a href=\"?action=kill&upgrade=%s\">kill</a></td>"
+                            , aaa
+                            , entry.getValue().getClass().getSimpleName()
+                            , entry.getKey()
+                            , entry.getValue().getClass().getName()
+                            , entry.getValue().getClass().getClassLoader()
+                            , entry.getValue().getClass().getName()
+                            , entry.getKey()));
+                    out.write("</tr>");
+                    aaa++;
+
+                }
+                out.write("</tbody></table>");
+
+
+
+
+
+
+                out.write("<h4>ExecutorShell Check </h4>");
+                out.write("<p>说明:通过修改nioEndpoint中存储的Executor线程池对象为恶意对象实现的内存马。因此查杀起来简单方便，看他对应的类是不是原本的org.apache.tomcat.util.threads.ThreadPoolExecutor即可</p>");
+                out.write("<table border=\"1\" cellspacing=\"0\" width=\"95%\" style=\"table-layout:fixed;word-break:break-all;background:#f2f2f2\">\n" +
+                        "    <thead>\n" +
+                        "        <th width=\"10%\">Executor Name</th>\n" +
+                        "        <th width=\"10%\">Executor class</th>\n" +
+                        "        <th width=\"10%\"> Executor classLoader</th>\n" +
+                        "        <th width=\"5%\">dump class</th>\n" +
+                        "        <th width=\"5%\">恢复</th>\n" +
+                        "    </thead>\n" +
+                        "    <tbody>");
+
+
+                // 从线程中获取NioEndpoint类
+                NioEndpoint nioEndpoint = null;
+                try {
+                    nioEndpoint = (NioEndpoint) getNioEndpoint();
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
+                ThreadPoolExecutor executor = (ThreadPoolExecutor)nioEndpoint.getExecutor();
+
+
+                out.write("<tr>");
+                out.write(String.format("<td>%s</td><td>%s</td><td>%s</td><td style=\"text-align:center\"><a href=\"?action=dump&className=%s\">dump</a></td><td style=\"text-align:center\"><a href=\"?action=kill&executor=%s\">kill</a></td>"
+                        , executor.getClass().getSimpleName()
+                        , executor.getClass().getName()
+                        , executor.getClass().getClassLoader()
+                        , executor.getClass().getName()
+                        , "recovery"));
+                out.write("</tr>");
+                out.write("</tbody></table>");
+
+
+
+
+
+
             }
+
+
         %>
     </div>
     <br/>
-    code by c0ny1
+    code by c0ny1;
 </center>
 </body>
 </html>
